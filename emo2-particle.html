@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Fixed Color & Logic Universe</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', monospace; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #video-input { position: absolute; top: 10px; left: 10px; width: 160px; height: 120px; z-index: 2; transform: scaleX(-1); border: 2px solid #333; opacity: 0.5; border-radius: 8px;}
+        #ui { position: absolute; bottom: 20px; left: 20px; color: #00ffcc; z-index: 3; pointer-events: none; }
+        .hud-text { text-shadow: 0 0 5px #00ffcc; font-size: 14px; margin-bottom: 5px; }
+        #emotion-tag { font-size: 24px; font-weight: bold; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+
+    <video id="video-input" playsinline></video>
+    <div id="canvas-container"></div>
+    
+    <div id="ui">
+        <div class="hud-text">LOGIC & COLOR PATCH v1.2</div>
+        <div class="hud-text">STATE: <span id="emotion-tag">NEUTRAL</span></div>
+        <div class="hud-text" id="status-desc">Calibrating...</div>
+    </div>
+
+<script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://unpkg.com/@mediapipe/face_mesh/face_mesh.js"></script>
+
+<script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+    const PARTICLE_COUNT = 20000;
+    let scene, camera, renderer, particles, geometry;
+    let positions, targetPositions, colors;
+    let currentEmotion = "NEUTRAL";
+    let blinkCooldown = 0;
+
+    async function initVision() {
+        const videoElement = document.getElementById('video-input');
+        const faceMesh = new FaceMesh({locateFile: (file) => `https://unpkg.com/@mediapipe/face_mesh/${file}`});
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5 });
+        faceMesh.onResults(onFaceResults);
+
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({image: videoElement}); },
+            width: 640, height: 480
+        });
+        cam.start();
+    }
+
+function getEAR(points, eyeIndices) {
+    const p1 = points[eyeIndices[0]];
+    const p2 = points[eyeIndices[1]];
+    const p3 = points[eyeIndices[2]];
+    const p4 = points[eyeIndices[3]];
+    const p5 = points[eyeIndices[4]];
+    const p6 = points[eyeIndices[5]];
+
+    // Vertical distances
+    const v1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
+    const v2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
+    // Horizontal distance (normalization factor)
+    const h = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
+
+    return (v1 + v2) / (2.0 * h); // Standard Eye Aspect Ratio formula
+}
+    function onFaceResults(results) {
+       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        const points = results.multiFaceLandmarks[0];
+        
+        // Accurate Landmark Indices for EAR
+        const leftIdx = [362, 385, 387, 263, 373, 380];
+        const rightIdx = [33, 160, 158, 133, 153, 144];
+
+        const leftEAR = getEAR(points, leftIdx);
+        const rightEAR = getEAR(points, rightIdx);
+        const avgEAR = (leftEAR + rightEAR) / 2.0;
+
+        // BLINK DETECTION (Threshold ~0.22)
+        if (avgEAR < 0.22 && blinkCooldown <= 0) {
+            triggerFirework();
+            blinkCooldown = 15; 
+        }
+        if (blinkCooldown > 0) blinkCooldown--;
+
+        // EMOTION LOGIC
+        const mouthOpen = points[14].y - points[13].y;
+        const mouthWidth = Math.abs(points[291].x - points[61].x);
+
+        let emotion = "NEUTRAL";
+        // Logic check: Smile + Open Mouth + Open Eyes (Higher EAR)
+        if (mouthWidth > 0.15 && mouthOpen > 0.05 && avgEAR > 0.28) emotion = "EXCITED";
+        else if (mouthOpen > 0.09) emotion = "SURPRISED";
+        else if (mouthWidth > 0.15) emotion = "HAPPY";
+        else if (avgEAR < 0.25 && mouthOpen < 0.02) emotion = "ANGRY";
+
+        if (emotion !== currentEmotion) {
+            currentEmotion = emotion;
+            updateVisuals(emotion);
+        }
+    }
+}
+    function triggerFirework() {
+        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+            targetPositions[i] *= 4.0; 
+        }
+        setTimeout(() => setShapeByEmotion(currentEmotion), 120);
+    }
+
+    function setShapeByEmotion(emotion) {
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const idx = i * 3;
+            let x, y, z;
+            if (emotion === "EXCITED") {
+                const angle = Math.random() * Math.PI * 2;
+                const length = Math.random() * 50;
+                x = Math.cos(angle) * length; y = Math.sin(angle) * length; z = (Math.random()-0.5)*15;
+            } else if (emotion === "SURPRISED") {
+                const r = 30;
+                const phi = Math.random() * Math.PI; const theta = Math.random() * Math.PI * 2;
+                x = r * Math.sin(phi) * Math.cos(theta); y = r * Math.sin(phi) * Math.sin(theta); z = r * Math.cos(phi);
+            } else if (emotion === "ANGRY") {
+                x = (Math.random()-0.5)*2.5; y = (Math.random()-0.5)*2.5; z = (Math.random()-0.5)*2.5;
+            } else if (emotion === "HAPPY") {
+                const r = Math.sqrt(i) * 0.55; const a = i * 0.15;
+                x = r * Math.cos(a); y = r * Math.sin(a); z = (Math.random()-0.5)*5;
+            } else {
+                const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
+                const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
+                x = 18 * Math.cos(theta) * Math.sin(phi); y = 18 * Math.sin(theta) * Math.sin(phi); z = 18 * Math.cos(phi);
+            }
+            targetPositions[idx] = x; targetPositions[idx+1] = y; targetPositions[idx+2] = z;
+        }
+    }
+
+    function updateVisuals(emotion) {
+        const tag = document.getElementById('emotion-tag');
+        const desc = document.getElementById('status-desc');
+        tag.innerText = emotion;
+        if (emotion === "EXCITED") { tag.style.color = "#ff00ff"; desc.innerText = "High-energy supernova!"; }
+        else if (emotion === "SURPRISED") { tag.style.color = "#00ffff"; desc.innerText = "Expansion shockwave!"; }
+        else if (emotion === "HAPPY") { tag.style.color = "#ffff00"; desc.innerText = "Golden spiral stable."; }
+        else if (emotion === "ANGRY") { tag.style.color = "#ff4400"; desc.innerText = "Gravitational core heating up."; }
+        else { tag.style.color = "#00ffcc"; desc.innerText = "Cosmic equilibrium."; }
+        setShapeByEmotion(emotion);
+    }
+
+    function initGraphics() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.z = 60;
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        geometry = new THREE.BufferGeometry();
+        positions = new Float32Array(PARTICLE_COUNT * 3);
+        targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        colors = new Float32Array(PARTICLE_COUNT * 3);
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        const material = new THREE.PointsMaterial({ size: 0.3, vertexColors: true, blending: THREE.AdditiveBlending });
+        particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+        setShapeByEmotion("NEUTRAL");
+        animate();
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const pos = geometry.attributes.position.array;
+        const col = geometry.attributes.color.array;
+        for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+            pos[i] += (targetPositions[i] - pos[i]) * 0.1;
+            
+            // COLOR TRANSITIONS
+            if (currentEmotion === "ANGRY") {
+                // RED / ORANGE CORE
+                col[i] = THREE.MathUtils.lerp(col[i], (i%3===0) ? 1.0 : (i%3===1 ? 0.2 : 0.0), 0.1);
+            } else if (currentEmotion === "EXCITED") {
+                col[i] = THREE.MathUtils.lerp(col[i], (i%3===1) ? 0.2 : 1.0, 0.1);
+            } else if (currentEmotion === "SURPRISED") {
+                col[i] = THREE.MathUtils.lerp(col[i], (i%3===0) ? 0.0 : 1.0, 0.1);
+            } else if (currentEmotion === "HAPPY") {
+                col[i] = THREE.MathUtils.lerp(col[i], (i%3===2) ? 0.0 : 1.0, 0.1);
+            } else {
+                // TEAL NEUTRAL
+                col[i] = THREE.MathUtils.lerp(col[i], (i%3===0) ? 0.0 : 0.6, 0.05);
+            }
+        }
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+        particles.rotation.y += 0.005;
+        renderer.render(scene, camera);
+    }
+
+    initGraphics();
+    initVision();
+</script>
+</body>
+</html>

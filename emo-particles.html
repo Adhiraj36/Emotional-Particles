@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Emotion Reactive Universe</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', monospace; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #video-input { position: absolute; top: 10px; left: 10px; width: 160px; height: 120px; z-index: 2; transform: scaleX(-1); border: 2px solid #333; opacity: 0.5; border-radius: 8px;}
+        #ui { position: absolute; bottom: 20px; left: 20px; color: #00ffcc; z-index: 3; pointer-events: none; }
+        .hud-text { text-shadow: 0 0 5px #00ffcc; font-size: 14px; margin-bottom: 5px; }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 24px; z-index: 10; }
+        #emotion-tag { font-size: 24px; font-weight: bold; color: #fff; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+
+    <div id="loading">Syncing Neural Networks...</div>
+    <video id="video-input" playsinline></video>
+    <div id="canvas-container"></div>
+    
+    <div id="ui">
+        <div class="hud-text">FACE TRACKING ACTIVE</div>
+        <div class="hud-text">EMOTION: <span id="emotion-tag">NEUTRAL</span></div>
+        <div class="hud-text" id="status-desc">The universe is calm.</div>
+    </div>
+
+<script src="https://unpkg.com/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://unpkg.com/@mediapipe/face_mesh/face_mesh.js"></script>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+        const PARTICLE_COUNT = 15000;
+        let scene, camera, renderer, particles, geometry;
+        let positions, targetPositions, colors;
+        let currentEmotion = "NEUTRAL";
+        
+        // Setup MediaPipe Face Mesh
+        async function initVision() {
+            const videoElement = document.getElementById('video-input');
+            const faceMesh = new FaceMesh({locateFile: (file) => `https://unpkg.com/@mediapipe/face_mesh/${file}`});
+
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            faceMesh.onResults(onFaceResults);
+
+            const cameraHelper = new Camera(videoElement, {
+                onFrame: async () => { await faceMesh.send({image: videoElement}); },
+                width: 640, height: 480
+            });
+            cameraHelper.start();
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // --- Emotion Detection Logic ---
+        function onFaceResults(results) {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const points = results.multiFaceLandmarks[0];
+                
+                // Simplified Emotion Heuristics
+                const topLip = points[13].y;
+                const bottomLip = points[14].y;
+                const mouthOpen = bottomLip - topLip;
+                
+                const leftMouth = points[61];
+                const rightMouth = points[291];
+                const mouthWidth = Math.abs(rightMouth.x - leftMouth.x);
+                
+                const eyeTop = points[159].y;
+                const eyeBottom = points[145].y;
+                const eyeOpen = eyeBottom - eyeTop;
+
+                let emotion = "NEUTRAL";
+                
+                if (mouthOpen > 0.05 && eyeOpen > 0.03) emotion = "SURPRISED";
+                else if (mouthWidth > 0.15 && mouthOpen < 0.04) emotion = "HAPPY";
+                else if (eyeOpen < 0.01) emotion = "ANGRY"; // Squinting
+                else if (points[13].y > points[14].y + 0.01) emotion = "SAD";
+
+                if (emotion !== currentEmotion) {
+                    currentEmotion = emotion;
+                    updateVisuals(emotion);
+                }
+            }
+        }
+
+        function updateVisuals(emotion) {
+            const tag = document.getElementById('emotion-tag');
+            const desc = document.getElementById('status-desc');
+            tag.innerText = emotion;
+
+            if (emotion === "HAPPY") {
+                desc.innerText = "Universe is expanding with joy.";
+                tag.style.color = "#ffff00";
+                setShape("FLOWER");
+            } else if (emotion === "SURPRISED") {
+                desc.innerText = "Cosmic shockwave detected!";
+                tag.style.color = "#00ffff";
+                setShape("EXPLOSION");
+            } else if (emotion === "ANGRY") {
+                desc.innerText = "The stars are heating up.";
+                tag.style.color = "#ff0000";
+                setShape("COMPACT");
+            } else {
+                desc.innerText = "The universe is calm.";
+                tag.style.color = "#00ffcc";
+                setShape("SPHERE");
+            }
+        }
+
+        // --- Graphics Logic ---
+        function initGraphics() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            camera.position.z = 40;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            geometry = new THREE.BufferGeometry();
+            positions = new Float32Array(PARTICLE_COUNT * 3);
+            targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+            colors = new Float32Array(PARTICLE_COUNT * 3);
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                positions[i] = (Math.random() - 0.5) * 50;
+                colors[i] = Math.random();
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({ size: 0.2, vertexColors: true, transparent: true, opacity: 0.8 });
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            setShape("SPHERE");
+            animate();
+        }
+
+        function setShape(type) {
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const idx = i * 3;
+                let x, y, z;
+                if (type === "SPHERE") {
+                    const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
+                    const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
+                    x = 15 * Math.cos(theta) * Math.sin(phi);
+                    y = 15 * Math.sin(theta) * Math.sin(phi);
+                    z = 15 * Math.cos(phi);
+                } else if (type === "EXPLOSION") {
+                    x = (Math.random() - 0.5) * 60;
+                    y = (Math.random() - 0.5) * 60;
+                    z = (Math.random() - 0.5) * 60;
+                } else if (type === "COMPACT") {
+                    x = (Math.random() - 0.5) * 5;
+                    y = (Math.random() - 0.5) * 5;
+                    z = (Math.random() - 0.5) * 5;
+                } else {
+                    const angle = i * 0.1;
+                    const r = Math.sqrt(i) * 0.5;
+                    x = r * Math.cos(angle);
+                    y = r * Math.sin(angle);
+                    z = Math.sin(i) * 5;
+                }
+                targetPositions[idx] = x;
+                targetPositions[idx+1] = y;
+                targetPositions[idx+2] = z;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const pos = geometry.attributes.position.array;
+            const col = geometry.attributes.color.array;
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                pos[i] += (targetPositions[i] - pos[i]) * 0.05;
+                
+                // Color shift based on emotion
+                if (currentEmotion === "ANGRY") col[i] = THREE.MathUtils.lerp(col[i], i%3===0 ? 1 : 0, 0.1);
+                else if (currentEmotion === "HAPPY") col[i] = THREE.MathUtils.lerp(col[i], i%3===2 ? 0 : 1, 0.1);
+                else col[i] = THREE.MathUtils.lerp(col[i], 0.5, 0.01);
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+            particles.rotation.y += 0.005;
+            renderer.render(scene, camera);
+        }
+
+        initGraphics();
+        initVision();
+    </script>
+</body>
+</html>
